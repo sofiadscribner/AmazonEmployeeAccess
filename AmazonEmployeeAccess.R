@@ -50,4 +50,14 @@ train %>%
 
 # I can see that there are literally thousands of unique categories in most of these variables. Role Family only has 67
 
+# ENCODING RECIPE PRACTICE
+
+practice_recipe <- recipe(ACTION ~., data = train) %>%
+  step_other(all_nominal_predictors(), threshold = .001) %>%
+  step_dummy(all_nominal_predictors())
+
+prep <- prep(practice_recipe)
+baked <- bake(prep, new_data = train)
+  
+
 
