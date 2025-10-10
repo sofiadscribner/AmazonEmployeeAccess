@@ -94,3 +94,67 @@ logRegsub <- bind_cols(test %>% select(id), logReg_preds %>% select(.pred_1)) %>
 # save predictions locally
 
 vroom_write(x=logRegsub, file="./logRegPreds.csv", delim=",")
+
+# PENALIZED LOGISTIC REGRESSION
+
+# recipe
+
+pen_recipe <- recipe(ACTION ~., data = train) %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>%
+  step_normalize(all_predictors())
+
+# model
+
+pen_model <- logistic_reg(mixture = tune(), penalty = tune()) %>%
+  set_engine("glmnet")
+
+# workflow
+
+pen_workflow <- workflow() %>%
+  add_recipe(pen_recipe) %>%
+  add_model(pen_model)
+
+# Define the parameter space
+pen_params <- parameters(penalty(range = c(-4, -1)), mixture())
+
+# Build a regular grid across that space
+tune_grid <- grid_regular(pen_params, levels = 5)
+
+# split data for CV
+
+folds <- vfold_cv(train, v = 4, repeats = 1)
+
+# run CV
+
+pen_cv_results <- pen_workflow %>%
+  tune_grid(resamples = folds,
+            grid = tune_grid,
+            metrics = metric_set(roc_auc))
+
+# find best parameters
+
+best_params <- pen_cv_results %>%
+  select_best(metric = "roc_auc")
+
+# finalize workflow
+
+final_pen_wf <-
+  pen_workflow %>%
+  finalize_workflow(best_params) %>%
+  fit(data = train)
+
+
+# make preds
+
+pen_preds <- predict(final_pen_wf,
+                        new_data = test,
+                        type = "prob")
+
+# format for kaggle submission
+
+pen_log_reg_sub <- bind_cols(test %>% select(id), pen_preds %>% select(.pred_1)) %>%
+  rename(ACTION = .pred_1)
+
+# save predictions locally
+
+vroom_write(x=pen_log_reg_sub, file="./PenLogRegPreds.csv", delim=",")
