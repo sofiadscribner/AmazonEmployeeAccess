@@ -158,3 +158,70 @@ pen_log_reg_sub <- bind_cols(test %>% select(id), pen_preds %>% select(.pred_1))
 # save predictions locally
 
 vroom_write(x=pen_log_reg_sub, file="./PenLogRegPreds.csv", delim=",")
+
+
+# RANDOM FOREST
+
+# recipe
+
+forest_recipe <- recipe(ACTION ~., data = train) %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
+
+# model
+
+forest_model <- rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+# workflow
+
+forest_workflow <- workflow() %>%
+  add_recipe(forest_recipe) %>%
+  add_model(forest_model)
+
+
+# Build a regular grid across that space
+tune_grid <- grid_regular(
+  mtry(range = c(2, sqrt(ncol(train) - 1))),
+  min_n(range = c(2, 10)),
+  levels = 3
+)
+
+# split data for CV
+
+folds <- vfold_cv(train, v = 4)
+
+# run CV
+
+forest_cv_results <- forest_workflow %>%
+  tune_grid(resamples = folds,
+            grid = tune_grid,
+            metrics = metric_set(roc_auc))
+
+# find best parameters
+
+best_params <- forest_cv_results %>%
+  select_best(metric = "roc_auc")
+
+# finalize workflow
+
+final_forest_wf <-
+  forest_workflow %>%
+  finalize_workflow(best_params) %>%
+  fit(data = train)
+
+
+# make preds
+
+forest_preds <- predict(final_forest_wf,
+                     new_data = test,
+                     type = "prob")
+
+# format for kaggle submission
+
+forest_sub <- bind_cols(test %>% select(id), forest_preds %>% select(.pred_1)) %>%
+  rename(ACTION = .pred_1)
+
+# save predictions locally
+
+vroom_write(x=forest_sub, file="./ForestPreds.csv", delim=",")
