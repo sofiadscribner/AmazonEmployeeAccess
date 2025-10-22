@@ -5,6 +5,7 @@ library(tidymodels)
 library(vroom)
 library(ggmosaic)
 library(embed)
+library(kknn)
 
 # read in data
 
@@ -225,3 +226,69 @@ forest_sub <- bind_cols(test %>% select(id), forest_preds %>% select(.pred_1)) %
 # save predictions locally
 
 vroom_write(x=forest_sub, file="./ForestPreds.csv", delim=",")
+
+## K-NEAREST NEIGHBORS
+
+# recipe
+
+knn_recipe <- recipe(ACTION ~., data = train) %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>%
+  step_normalize(all_predictors())
+
+# model
+
+knn_model <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+# workflow
+
+knn_workflow <- workflow() %>%
+  add_recipe(knn_recipe) %>%
+  add_model(knn_model)
+
+
+# Build a regular grid across that space
+tune_grid <- grid_regular(
+  neighbors(range = c(1, 51)), 
+  levels = 6               
+)
+
+# split data for CV
+
+folds <- vfold_cv(train, v = 4)
+
+# run CV
+
+knn_cv_results <- knn_workflow %>%
+  tune_grid(resamples = folds,
+            grid = tune_grid,
+            metrics = metric_set(roc_auc))
+
+# find best parameters
+
+best_params <- knn_cv_results %>%
+  select_best(metric = "roc_auc")
+
+# finalize workflow
+
+final_knn_wf <-
+  knn_workflow %>%
+  finalize_workflow(best_params) %>%
+  fit(data = train)
+
+
+# make preds
+
+knn_preds <- predict(final_knn_wf,
+                        new_data = test,
+                        type = "prob")
+
+# format for kaggle submission
+
+knn_sub <- bind_cols(test %>% select(id), knn_preds %>% select(.pred_1)) %>%
+  rename(ACTION = .pred_1)
+
+# save predictions locally
+
+vroom_write(x=knn_sub, file="./KNNPreds.csv", delim=",")
