@@ -6,6 +6,7 @@ library(vroom)
 library(ggmosaic)
 library(embed)
 library(kknn)
+library(discrim)
 
 # read in data
 
@@ -292,3 +293,70 @@ knn_sub <- bind_cols(test %>% select(id), knn_preds %>% select(.pred_1)) %>%
 # save predictions locally
 
 vroom_write(x=knn_sub, file="./KNNPreds.csv", delim=",")
+
+## NAIVE BAYES
+
+# recipe
+
+nb_recipe <- recipe(ACTION ~., data = train) %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>%
+  step_normalize(all_predictors())
+
+# model
+
+nb_model <- naive_Bayes(Laplace = tune(), smoothness = tune()) %>%
+  set_engine("naivebayes") %>%
+  set_mode("classification")
+
+# workflow
+
+nb_workflow <- workflow() %>%
+  add_recipe(nb_recipe) %>%
+  add_model(nb_model)
+
+
+# Build a random grid across that space
+tune_grid <- grid_random(
+  Laplace(range = c(0, 2)),
+  smoothness(range = c(0, 2)),
+  size = 15 
+)
+
+# split data for CV
+
+folds <- vfold_cv(train, v = 4)
+
+# run CV
+
+nb_cv_results <- nb_workflow %>%
+  tune_grid(resamples = folds,
+            grid = tune_grid,
+            metrics = metric_set(roc_auc))
+
+# find best parameters
+
+best_params <- nb_cv_results %>%
+  select_best(metric = "roc_auc")
+
+# finalize workflow
+
+final_nb_wf <-
+  nb_workflow %>%
+  finalize_workflow(best_params) %>%
+  fit(data = train)
+
+
+# make preds
+
+nb_preds <- predict(final_nb_wf,
+                     new_data = test,
+                     type = "prob")
+
+# format for kaggle submission
+
+nb_sub <- bind_cols(test %>% select(id), nb_preds %>% select(.pred_1)) %>%
+  rename(ACTION = .pred_1)
+
+# save predictions locally
+
+vroom_write(x=nb_sub, file="./NBayesPreds.csv", delim=",")
