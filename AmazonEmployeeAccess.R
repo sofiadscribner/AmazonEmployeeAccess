@@ -7,6 +7,7 @@ library(ggmosaic)
 library(embed)
 library(kknn)
 library(discrim)
+library(keras)
 
 # read in data
 
@@ -360,3 +361,142 @@ nb_sub <- bind_cols(test %>% select(id), nb_preds %>% select(.pred_1)) %>%
 # save predictions locally
 
 vroom_write(x=nb_sub, file="./NBayesPreds.csv", delim=",")
+
+## NAIVE BAYES
+
+# recipe
+
+nb_recipe <- recipe(ACTION ~., data = train) %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>%
+  step_normalize(all_predictors())
+
+# model
+
+nb_model <- naive_Bayes(Laplace = tune(), smoothness = tune()) %>%
+  set_engine("naivebayes") %>%
+  set_mode("classification")
+
+# workflow
+
+nb_workflow <- workflow() %>%
+  add_recipe(nb_recipe) %>%
+  add_model(nb_model)
+
+
+# Build a random grid across that space
+tune_grid <- grid_random(
+  Laplace(range = c(0, 2)),
+  smoothness(range = c(0, 2)),
+  size = 15 
+)
+
+# split data for CV
+
+folds <- vfold_cv(train, v = 4)
+
+# run CV
+
+nb_cv_results <- nb_workflow %>%
+  tune_grid(resamples = folds,
+            grid = tune_grid,
+            metrics = metric_set(roc_auc))
+
+# find best parameters
+
+best_params <- nb_cv_results %>%
+  select_best(metric = "roc_auc")
+
+# finalize workflow
+
+final_nb_wf <-
+  nb_workflow %>%
+  finalize_workflow(best_params) %>%
+  fit(data = train)
+
+
+# make preds
+
+nb_preds <- predict(final_nb_wf,
+                    new_data = test,
+                    type = "prob")
+
+# format for kaggle submission
+
+nb_sub <- bind_cols(test %>% select(id), nb_preds %>% select(.pred_1)) %>%
+  rename(ACTION = .pred_1)
+
+# save predictions locally
+
+vroom_write(x=nb_sub, file="./NBayesPreds.csv", delim=",")
+
+
+# NEURAL NETWORK
+
+# recipe
+
+nn_recipe <- recipe(ACTION ~., data = train) %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>%
+  step_range(all_numeric_predictors(), min = 0, max = 1)
+
+early_stop <- callback_early_stopping(
+  monitor = "loss",
+  patience = 5,          
+  restore_best_weights = TRUE
+)
+  
+# model
+
+nn_model <- mlp(hidden_units = tune(), 
+                epochs = 20) %>%
+  set_engine("keras", callbacks = list(early_stop)) %>%
+  set_mode("classification")
+
+# workflow
+
+nn_workflow <- workflow() %>%
+  add_recipe(nn_recipe) %>%
+  add_model(nn_model)
+
+
+# Build a random grid across that space
+tune_grid <- grid_regular(hidden_units(range = c(1, 15)), levels = 5)
+
+# split data for CV
+
+folds <- vfold_cv(train, v = 3)
+
+# run CV
+
+nn_cv_results <- nn_workflow %>%
+  tune_grid(resamples = folds,
+            grid = tune_grid,
+            metrics = metric_set(accuracy))
+
+# find best parameters
+
+best_params <- nn_cv_results %>%
+  select_best(metric = "accuracy")
+
+# finalize workflow
+
+final_nn_wf <-
+  nn_workflow %>%
+  finalize_workflow(best_params) %>%
+  fit(data = train)
+
+
+# make preds
+
+nn_preds <- predict(final_nn_wf,
+                     new_data = test,
+                     type = "prob")
+
+# format for kaggle submission
+
+nn_sub <- bind_cols(test %>% select(id), nn_preds %>% select(.pred_1)) %>%
+  rename(ACTION = .pred_1)
+
+# save predictions locally
+
+vroom_write(x=nn_sub, file="./NeuralNetPreds.csv", delim=",")
+
