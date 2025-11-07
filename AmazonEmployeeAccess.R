@@ -500,3 +500,71 @@ nn_sub <- bind_cols(test %>% select(id), nn_preds %>% select(.pred_1)) %>%
 
 vroom_write(x=nn_sub, file="./NeuralNetPreds.csv", delim=",")
 
+
+# FINAL MODEL
+
+# recipe
+
+final_recipe <- recipe(ACTION ~., data = train) %>%
+  step_mutate_at(all_numeric_predictors(), fn = factor)%>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>%
+  step_normalize(all_numeric_predictors())
+
+# model
+
+final_model <- rand_forest(
+  mtry = tune(),
+  min_n = tune(), 
+  trees = 100) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+# workflow
+
+final_wf <- workflow() %>%
+  add_recipe(final_recipe) %>%
+  add_model(final_model)
+
+# cross validation
+
+folds <- vfold_cv(train, v = 5)
+
+# grid
+
+final_grid <- grid_regular(
+  mtry(range = c(1, 10)), 
+  min_n(range = c(1, 8)), 
+  levels = 5
+)
+  
+# tune
+
+final_tune <- final_wf %>%
+  tune_grid(
+    resamples = folds, 
+    grid = final_grid, 
+    metrics = metric_set(roc_auc)
+  )
+
+# save best params
+
+best_params <- select_best(final_tune, metric = "roc_auc")
+
+# finalize and fit
+
+final_final_wf <- final_wf %>%
+  finalize_workflow(best_params) %>%
+  fit(data = train)
+
+# predict and submit
+
+final_preds <- predict(final_final_wf, new_data = test, type = "prob")
+
+# format for kaggle submission
+
+final_sub <- bind_cols(test %>% select(id), final_preds %>% select(.pred_1)) %>%
+  rename(ACTION = .pred_1)
+
+# save predictions locally
+
+vroom_write(x=final_sub, file="./FinalPreds.csv", delim=",")
